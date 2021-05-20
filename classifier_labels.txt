@@ -1,0 +1,4 @@
+0  maskcorrect
+1  maskonchin
+2  maskonlyonmouth
+3  nomask
