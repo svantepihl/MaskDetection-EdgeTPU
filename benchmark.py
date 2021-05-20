@@ -47,7 +47,9 @@ import argparse
 import contextlib
 import threading
 import time
+from tqdm import tqdm
 from PIL import Image
+from statistics import mean
 
 from pycoral.adapters import classify
 from pycoral.adapters import common
@@ -88,6 +90,9 @@ def run_two_models_one_tpu(classification_model, detection_model, image_name,
     interpreter_b = make_interpreter(detection_model, device=':0')
     interpreter_b.allocate_tensors()
 
+    identification = []
+    classification = []
+
     with open_image(image_name) as image:
         size_a = common.input_size(interpreter_a)
         common.set_input(interpreter_a, image.resize(size_a, Image.NEAREST))
@@ -96,15 +101,27 @@ def run_two_models_one_tpu(classification_model, detection_model, image_name,
             lambda size: image.resize(size, Image.NEAREST))
 
     num_iterations = (num_inferences + batch_size - 1) // batch_size
-    for _ in range(num_iterations):
+    for _ in tqdm(range(num_iterations)):
         for _ in range(batch_size):
-            interpreter_a.invoke()
-            classify.get_classes(interpreter_a, top_k=1)
-        for _ in range(batch_size):
+            identification_start_time = time.perf_counter()
             interpreter_b.invoke()
             detect.get_objects(interpreter_b, score_threshold=0.,
                                image_scale=scale_b)
-    return time.perf_counter() - start_time
+            identification.append(time.perf_counter() -
+                                  identification_start_time)
+        for _ in range(batch_size):
+            classification_start_time = time.perf_counter()
+            interpreter_a.invoke()
+            result1 = classify.get_classes(interpreter_a, top_k=4)
+            interpreter_a.invoke()
+            result2 = classify.get_classes(interpreter_a, top_k=4)
+            interpreter_a.invoke()
+            result3 = classify.get_classes(interpreter_a, top_k=4)
+
+            classification.append(time.perf_counter() -
+                                  classification_start_time)
+    total_time = time.perf_counter() - start_time
+    return total_time, identification, classification
 
 
 def main():
@@ -120,7 +137,7 @@ def main():
     parser.add_argument(
         '--image',
         help='Path of the image.',
-        default="test_image.jpg")
+        default="test_image_3_faces.jpg")
     parser.add_argument(
         '--num_inferences',
         help='Number of inferences to run.',
@@ -130,19 +147,24 @@ def main():
         '--batch_size',
         help='Runs one model batch_size times before switching to the other.',
         type=int,
-        default=10)
+        default=1)
 
     args = parser.parse_args()
 
     print('Running %s and %s with one Edge TPU, # inferences %d, batch_size %d.' %
           (args.classification_model, args.detection_model, args.num_inferences,
            args.batch_size))
-    cost_one_tpu = run_two_models_one_tpu(args.classification_model,
-                                          args.detection_model, args.image,
-                                          args.num_inferences, args.batch_size)
+    total_time, identification, classification = run_two_models_one_tpu(args.classification_model,
+                                                                        args.detection_model, args.image,
+                                                                        args.num_inferences, args.batch_size)
 
-    print('Inference with one Edge TPU costs %.2f seconds.' % cost_one_tpu)
-    print('Inference with two Edge TPUs costs %.2f seconds.' % cost_two_tpus)
+    print('Run took: %.5f. seconds' % total_time)
+    print('Average identification time: %.5f seconds' % mean(identification))
+    print('Average classification time: %.5f seconds' % mean(classification))
+    avg_time = total_time / args.num_inferences
+    print('Average total time: %.5f seconds' % avg_time)
+    fps = args.num_inferences / total_time
+    print('Average FPS: %.5f seconds' % fps)
 
 
 if __name__ == '__main__':
