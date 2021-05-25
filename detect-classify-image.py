@@ -9,6 +9,11 @@ import argparse
 import cv2
 import os
 
+
+def load_image(path):
+    image = cv2.imread(path)
+    return image
+
 def detect_and_classify_faces(detector,classifier,image,threshold,padding = 10):
     predictions = []
     boxes = []
@@ -79,7 +84,6 @@ def append_boxes_to_img(cv2_img, boxes, predictions):
         cv2.rectangle(cv2_img, (startX, startY), (endX, endY), color, 2)
     return cv2_img
 
-
 def main():
     default_model_dir = 'models'
     default_detection_model = 'facedetector_quant_postprocess_edgetpu.tflite'
@@ -91,10 +95,8 @@ def main():
                         default=os.path.join(default_model_dir, default_detection_model))
     parser.add_argument('--classification_model', help='.tflite classification model path',
                         default=os.path.join(default_model_dir, default_classification_model))
-    parser.add_argument('--labels', help='label file path',
-                        default=os.path.join(default_model_dir, default_labels))
-    parser.add_argument('--camera_idx', type=int,
-                        help='Index of which video source to use. ', default=0)
+    parser.add_argument('--image', help='Path of the image.',
+            default="test_images/test_image_9_faces.jpg")
     parser.add_argument('--threshold', type=float, default=0.3,
                         help='classifier score threshold')
     args = parser.parse_args()
@@ -107,28 +109,16 @@ def main():
     classification_interpreter = make_interpreter(args.classification_model, device=':0')
     classification_interpreter.allocate_tensors()
 
-    print('Starting camera {}...'.format(args.image))
-    cap = cv2.VideoCapture(args.camera_idx)
+    print('Loading {}'.format(args.image))
+    image = load_image(args.image)
 
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
-        cv2_img = frame
+    boxes,predictions = detect_and_classify_faces(detection_interpreter,classification_interpreter,image,args.threshold)
 
-        image = cv2.cvtColor(cv2_img, cv2.COLOR_BGR2RGB)
+    final_image = append_boxes_to_img(image,boxes,predictions)
 
-        boxes,predictions = detect_and_classify_faces(detection_interpreter,classification_interpreter,image,args.threshold)
-
-        final_image = append_boxes_to_img(image,boxes,predictions)
-
-        cv2.imshow('frame', final_image)
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-
-    cap.release()
+    cv2.imshow('image',final_image)
+    cv2.waitKey(0)
     cv2.destroyAllWindows()
-
 
 
 if __name__ == '__main__':
